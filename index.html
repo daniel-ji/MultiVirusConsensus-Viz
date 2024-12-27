@@ -55,17 +55,20 @@
     <div id="viz-container"></div>
 
     <footer id="footer" class="mt-5 mb-4">
-      <h5>Future Features</h5>
-      <ul>
+      <h5>Future Features (Ranked by Estimated Priority)</h5>
+      <ol>
+        <li>Summary statistics? Sort by metric? How to compute coverage, depth? Want a global stat + window stat?</li>
+        <li>Aliased stacked bar chart (Summarize into 1,000 total bars?)</li>
+        <li>Export SVGs as PDF</li>
+        <li>Test 40 genomes & add lazy loading (load-out?) feature</li>
+        <li>Re-arrangeable graphs?</li>
         <li>Support compressed output folders (zip, tar.gz)</li>
         <li>Interactive Graphs</li>
-        <li>Summary statistics? How to compute coverage, depth? Want a global stat + window stat?</li>
         <li>Should x-axis be same across all graphs, even if some genomes don't have those position counts?</li>
         <li>Auto-hide certain outputs?</li>
-        <li>Re-arrangeable graphs?</li>
         <li>Add folder validation?</li>
         <li>Make offline-able?</li>
-      </ul>
+      </ol>
     </footer>
     <script src="https://d3js.org/d3.v4.js"></script>
     <script
@@ -141,7 +144,7 @@
         titleElement.innerText = key + " (Total Counts: " + maxPos + ")";
         document.getElementById("viz-container").appendChild(titleElement);
 
-        const margin = { top: 20, right: 100, bottom: 30, left: 50 };
+        const margin = { top: 20, right: 100, bottom: 50, left: 50 };
         const width = window.innerWidth * 0.9 - margin.left - margin.right;
         const height = 500 - margin.top - margin.bottom;
 
@@ -167,11 +170,26 @@
           .append("g")
           .attr("transform", `translate(${margin.left},${margin.top})`);
 
-        // Add X axis
+        // Add axes
         svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
-
-        // Add Y axis
         svg.append("g").call(d3.axisLeft(y));
+
+        // Add axes label
+        svg
+          .append("text")
+          .attr("transform", "rotate(-90)")
+          .attr("y", 0 - margin.left)
+          .attr("x", 0 - height / 2)
+          .attr("dy", "0.8em")
+          .style("text-anchor", "middle")
+          .text("Count");
+
+        svg
+          .append("text")
+          .attr("transform", `translate(${width / 2},${height + margin.top})`)
+          .attr("dy", "0.8em")
+          .style("text-anchor", "middle")
+          .text("Position");
 
         // Create the bars
         svg
@@ -247,10 +265,10 @@
         }
 
         document.getElementById("use-example-data").classList.add("d-none");
+        document.getElementById("coverage-container").classList.remove("d-none");
 
         const folderPath = files[0].webkitRelativePath.split("/")[0];
         document.getElementById("selected-folder-info").classList.remove("d-none");
-        document.getElementById("coverage-container").classList.remove("d-none");
         document.getElementById("selected-folder").innerText = folderPath;
 
         for (const file of files) {
@@ -292,10 +310,11 @@
         if (usingExampleData) {
           return;
         }
-
+        
+        document.getElementById("coverage-container").classList.remove("d-none");
         usingExampleData = true;
         const toggleButton = document.getElementById("use-example-data");
-        toggleButton.innerText = usingExampleData ? "Using Example Data!" : "Load Example Data";
+        toggleButton.innerText = "Using Example Data!";
         toggleButton.classList.remove("btn-warning");
         toggleButton.classList.add("btn-success");
 
