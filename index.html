@@ -57,14 +57,13 @@
     <footer id="footer" class="mt-5 mb-4">
       <h5>Future Features (Ranked by Estimated Priority)</h5>
       <ol>
-        <li>Summary statistics? Sort by metric? How to compute coverage, depth? Want a global stat + window stat?</li>
-        <li>Aliased stacked bar chart (Summarize into 1,000 total bars?)</li>
-        <li>Export SVGs as PDF</li>
+        <li>Export graphs as PNG and all graphs at once (zip)</li>
         <li>Test 40 genomes & add lazy loading (load-out?) feature</li>
         <li>Re-arrangeable graphs?</li>
         <li>Support compressed output folders (zip, tar.gz)</li>
         <li>Interactive Graphs</li>
         <li>Should x-axis be same across all graphs, even if some genomes don't have those position counts?</li>
+        <li>Same y-axis across all graphs?</li>
         <li>Auto-hide certain outputs?</li>
         <li>Add folder validation?</li>
         <li>Make offline-able?</li>
@@ -78,7 +77,13 @@
     ></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script>
-      const coverageHeaders = ["aCount", "cCount", "gCount", "tCount", "gapCount"];
+      const ALIASED_MAX = 1000;
+      const COVERAGE_HEADERS = ["aCount", "cCount", "gCount", "tCount", "gapCount"];
+      const GRAPH_MARGIN = { top: 20, right: 100, bottom: 50, left: 50 };
+      const GRAPH_WIDTH = window.innerWidth * 0.9 - GRAPH_MARGIN.left - GRAPH_MARGIN.right;
+      const GRAPH_HEIGHT = 500 - GRAPH_MARGIN.top - GRAPH_MARGIN.bottom;
+      const ALIASED_GRAPH_HEIGHT = 250 - GRAPH_MARGIN.top - GRAPH_MARGIN.bottom;
+
       let coverageWindowStart = 0;
       let coverageWindowEnd = 10000;
       let coverageData = {};
@@ -95,10 +100,12 @@
         let maxPos = Number.MIN_SAFE_INTEGER;
         let minCount = Number.MAX_SAFE_INTEGER;
         let maxCount = Number.MIN_SAFE_INTEGER;
+        let globalCoverage = 0;
         const data = lines.slice(1).map((line) => {
           const [pos, aCount, cCount, gCount, tCount, gapCount, totalCount] = line.split("\t");
           const posInt = parseInt(pos);
           const totalCountInt = parseInt(totalCount);
+          globalCoverage += totalCountInt;
           minPos = Math.min(minPos, posInt);
           maxPos = Math.max(maxPos, posInt);
           minCount = Math.min(minCount, totalCountInt);
@@ -117,16 +124,37 @@
 
         globalMin = Math.min(globalMin, minCount);
         globalMax = Math.max(globalMax, maxCount);
+        globalCoverage = globalCoverage / (maxPos - minPos);
+
+        let aliasedData;
+        if (data.length < ALIASED_MAX) {
+          aliasedData = data;
+        } else {
+          aliasedData = [];
+          const aliasedDataIncrement = data.length / ALIASED_MAX;
+          for (let i = 0; i < data.length; i += aliasedDataIncrement) {
+            const chunk = data.slice(i, i + aliasedDataIncrement);
+            const totalCount = chunk.reduce((acc, curr) => acc + curr.totalCount, 0) / aliasedDataIncrement;
+
+            aliasedData.push({
+              pos: Math.floor(i + aliasedDataIncrement / 2),
+              totalCount,
+            });
+          }
+        }
 
         coverageData[filename] = {
           data,
+          aliasedData,
           minPos,
           maxPos,
           minCount,
           maxCount,
+          globalCoverage,
         };
 
         createCoverageGraph(filename);
+        createAliasedCoverageGraph(filename);
       };
 
       /**
@@ -134,29 +162,45 @@
        */
       const createCoverageGraph = (key) => {
         const data = coverageData[key].data.slice(coverageWindowStart, coverageWindowEnd);
-        const minPos = coverageData[key].minPos;
         const maxPos = coverageData[key].maxPos;
         const minCount = coverageData[key].minCount;
         const maxCount = coverageData[key].maxCount;
+        const globalCoverage = coverageData[key].globalCoverage.toFixed(2);
+
+        let windowCoverage = 0;
+        for (let i = 0; i < data.length; i++) {
+          windowCoverage += data[i].totalCount;
+        }
+        windowCoverage = (windowCoverage / (coverageWindowEnd - coverageWindowStart)).toFixed(2);
 
         const titleElement = document.createElement("h3");
         titleElement.classList.add("mt-5", "mb-4");
-        titleElement.innerText = key + " (Total Counts: " + maxPos + ")";
-        document.getElementById("viz-container").appendChild(titleElement);
+        titleElement.innerText = key;
 
-        const margin = { top: 20, right: 100, bottom: 50, left: 50 };
-        const width = window.innerWidth * 0.9 - margin.left - margin.right;
-        const height = 500 - margin.top - margin.bottom;
+        const downloadIcon = document.createElement("img");
+        downloadIcon.classList.add("ms-2");
+        downloadIcon.style.cursor = "pointer";
+        downloadIcon.style.width = "2rem";
+        downloadIcon.style.height = "2rem";
+        downloadIcon.src = "download.png";
+        addDownloadEventListener(downloadIcon, key, `-${coverageWindowStart}-${coverageWindowEnd}`);
+        titleElement.appendChild(downloadIcon);
+
+        const subtitleElement = document.createElement("h6");
+        subtitleElement.innerText = `Total Counts: ${maxPos} | Global Coverage: ${globalCoverage}x | Window Coverage: ${windowCoverage}x`;
+
+        document.getElementById("viz-container").appendChild(titleElement);
+        document.getElementById("viz-container").appendChild(subtitleElement);
 
         // Create scales
-        const x = d3.scaleLinear().domain([coverageWindowStart, coverageWindowEnd]).range([0, width]);
-        const y = d3.scaleLinear().domain([minCount, maxCount]).range([height, 0]);
+        const x = d3.scaleLinear().domain([coverageWindowStart, coverageWindowEnd]).range([0, GRAPH_WIDTH]);
+        const y = d3.scaleLinear().domain([minCount, maxCount]).range([GRAPH_HEIGHT, 0]);
 
         // Create color scale
-        const color = d3.scaleOrdinal().domain(coverageHeaders).range(d3.schemeCategory10);
+        const color = d3.scaleOrdinal().domain(COVERAGE_HEADERS).range(d3.schemeCategory10);
 
         // Stack the data
-        const stack = d3.stack().keys(coverageHeaders).order(d3.stackOrderNone).offset(d3.stackOffsetNone);
+        const stack = d3.stack().keys(COVERAGE_HEADERS).order(d3.stackOrderNone).offset(d3.stackOffsetNone);
         const stackedData = stack(data);
 
         // Create SVG
@@ -165,30 +209,33 @@
           .append("div")
           .attr("class", "w-100")
           .append("svg")
-          .attr("width", width + margin.left + margin.right)
-          .attr("height", height + margin.top + margin.bottom)
+          .attr("id", "graph-" + key)
+          .attr("width", GRAPH_WIDTH + GRAPH_MARGIN.left + GRAPH_MARGIN.right)
+          .attr("height", GRAPH_HEIGHT + GRAPH_MARGIN.top + GRAPH_MARGIN.bottom)
+          .attr("font-family", "sans-serif")
           .append("g")
-          .attr("transform", `translate(${margin.left},${margin.top})`);
+          .attr("transform", `translate(${GRAPH_MARGIN.left},${GRAPH_MARGIN.top})`);
 
         // Add axes
-        svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+        svg.append("g").attr("transform", `translate(0,${GRAPH_HEIGHT})`).call(d3.axisBottom(x));
         svg.append("g").call(d3.axisLeft(y));
 
         // Add axes label
         svg
           .append("text")
           .attr("transform", "rotate(-90)")
-          .attr("y", 0 - margin.left)
-          .attr("x", 0 - height / 2)
-          .attr("dy", "0.8em")
+          .attr("y", 0 - GRAPH_MARGIN.left)
+          .attr("x", 0 - GRAPH_HEIGHT / 2)
+          .attr("dy", "1em")
+          .style("font-size", "14px")
           .style("text-anchor", "middle")
           .text("Count");
-
         svg
           .append("text")
-          .attr("transform", `translate(${width / 2},${height + margin.top})`)
-          .attr("dy", "0.8em")
+          .attr("transform", `translate(${GRAPH_WIDTH / 2},${GRAPH_HEIGHT + GRAPH_MARGIN.top})`)
+          .attr("dy", "1em")
           .style("text-anchor", "middle")
+          .style("font-size", "14px")
           .text("Position");
 
         // Create the bars
@@ -206,7 +253,7 @@
           .attr("x", (d) => x(d.data.pos))
           .attr("y", (d) => y(d[1]))
           .attr("height", (d) => y(d[0]) - y(d[1]))
-          .attr("width", width / (coverageWindowEnd - coverageWindowStart));
+          .attr("width", GRAPH_WIDTH / (coverageWindowEnd - coverageWindowStart));
 
         // Add legend
         const legend = svg
@@ -215,24 +262,86 @@
           .attr("font-size", 10)
           .attr("text-anchor", "start")
           .selectAll("g")
-          .data(coverageHeaders)
+          .data(COVERAGE_HEADERS)
           .enter()
           .append("g")
           .attr("transform", (d, i) => `translate(0,${i * 20})`);
-
         legend
           .append("rect")
-          .attr("x", width + 10)
+          .attr("x", GRAPH_WIDTH + 10)
           .attr("width", 19)
           .attr("height", 19)
           .attr("fill", color);
-
         legend
           .append("text")
-          .attr("x", width + 34)
+          .attr("x", GRAPH_WIDTH + 34)
           .attr("y", 9.5)
           .attr("dy", "0.32em")
           .text((d) => d);
+      };
+
+      const createAliasedCoverageGraph = (key) => {
+        const data = coverageData[key].aliasedData;
+        const maxPos = coverageData[key].maxPos;
+        const minCount = coverageData[key].minCount;
+        const maxCount = coverageData[key].maxCount;
+
+        const subtitleElement = document.createElement("h6");
+        subtitleElement.innerText = `Aliased Data`;
+        document.getElementById("viz-container").appendChild(subtitleElement);
+
+        // Create scales
+        const x = d3.scaleLinear().domain([0, maxPos]).range([0, GRAPH_WIDTH]);
+        const y = d3.scaleLinear().domain([minCount, maxCount]).range([ALIASED_GRAPH_HEIGHT, 0]);
+
+        // Create SVG
+        const svg = d3
+          .select("#viz-container")
+          .append("div")
+          .attr("class", "w-100")
+          .append("svg")
+          .attr("id", "aliased-graph-" + key)
+          .attr("width", GRAPH_WIDTH + GRAPH_MARGIN.left + GRAPH_MARGIN.right)
+          .attr("height", ALIASED_GRAPH_HEIGHT + GRAPH_MARGIN.top + GRAPH_MARGIN.bottom)
+          .attr("font-family", "sans-serif")
+          .append("g")
+          .attr("transform", `translate(${GRAPH_MARGIN.left},${GRAPH_MARGIN.top})`);
+
+        // Add axes
+        svg.append("g").attr("transform", `translate(0,${ALIASED_GRAPH_HEIGHT})`).call(d3.axisBottom(x));
+        svg.append("g").call(d3.axisLeft(y));
+
+        // Add axes label
+        svg
+          .append("text")
+          .attr("transform", "rotate(-90)")
+          .attr("y", 0 - GRAPH_MARGIN.left)
+          .attr("x", 0 - ALIASED_GRAPH_HEIGHT / 2)
+          .attr("dy", "1em")
+          .style("font-size", "14px")
+          .style("text-anchor", "middle")
+          .text("Count");
+        svg
+          .append("text")
+          .attr("transform", `translate(${GRAPH_WIDTH / 2},${ALIASED_GRAPH_HEIGHT + GRAPH_MARGIN.top})`)
+          .attr("dy", "1em")
+          .style("font-size", "14px")
+          .style("text-anchor", "middle")
+          .text("Position");
+
+        // Create the bars
+        svg
+          .selectAll("rect")
+          .data(data)
+          .enter()
+          .append("rect")
+          .attr("x", (d) => x(d.pos))
+          .attr("y", (d) => y(d.totalCount))
+          .attr("height", (d) => y(minCount) - y(d.totalCount))
+          .attr("width", GRAPH_WIDTH / data.length)
+          .attr("fill", (d) => {
+            return d.pos < coverageWindowStart || d.pos > coverageWindowEnd ? "lightgray" : "steelblue";
+          });
       };
 
       const getExampleData = async () => {
@@ -254,6 +363,25 @@
         };
 
         reader.readAsArrayBuffer(data);
+      };
+
+      const addDownloadEventListener = (element, key, suffix) => {
+        element.addEventListener("click", () => {
+          downloadSVG("graph-" + key, suffix);
+          downloadSVG("aliased-graph-" + key, suffix);
+        });
+      };
+
+      const downloadSVG = (id, suffix) => {
+        const svg = document.getElementById(id);
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const blob = new Blob([svgData], { type: "image/svg+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.setAttribute("href", url);
+        a.setAttribute("download", id + suffix + ".svg");
+        a.click();
+        a.remove();
       };
 
       document.getElementById("input-folder").addEventListener("change", (e) => {
@@ -303,6 +431,7 @@
         document.getElementById("viz-container").innerHTML = "";
         for (const key in coverageData) {
           createCoverageGraph(key);
+          createAliasedCoverageGraph(key);
         }
       });
 
@@ -310,7 +439,7 @@
         if (usingExampleData) {
           return;
         }
-        
+
         document.getElementById("coverage-container").classList.remove("d-none");
         usingExampleData = true;
         const toggleButton = document.getElementById("use-example-data");
