@@ -43,11 +43,12 @@
           </div>
           <div class="w-50 ps-3">
             <label for="coverage-window-end" class="mt-2">End</label>
-            <input type="number" id="coverage-window-end" class="form-control" value="10000" min="0" />
+            <input type="number" id="coverage-window-end" class="form-control" value="1000" min="0" />
           </div>
         </div>
-        <div class="w-100 d-flex justify-content-center">
+        <div class="w-100 d-flex flex-column align-items-center">
           <button id="update-coverage-window" class="btn btn-primary mt-3 w-100">Update</button>
+          <button id="toggle-all-window-graphs" class="btn btn-outline-primary mt-3 w-100">Toggle All Window Coverage Graphs</button>
         </div>
       </div>
     </div>
@@ -59,8 +60,9 @@
       <ol>
         <li>#! Export graphs as PNG and all graphs at once (zip)</li>
         <li>#! Test 40 genomes & add lazy loading (load-out?) feature</li>
-        <li>#! Re-arrangeable graphs?</li>
+        <li>#! Re-arrangeable graph with sidebar up-down buttons</li>
         <li>#! Support compressed output folders (zip, tar.gz)</li>
+        <li>Optimize performance</li>
         <li>Interactive Graphs</li>
         <li>Should x-axis be same across all graphs, even if some genomes don't have those position counts?</li>
         <li>Same y-axis across all graphs?</li>
@@ -75,17 +77,18 @@
       integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
       crossorigin="anonymous"
     ></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script>
       const ALIASED_MAX = 1000;
       const COVERAGE_HEADERS = ["aCount", "cCount", "gCount", "tCount", "gapCount"];
       const GRAPH_MARGIN = { top: 20, right: 100, bottom: 50, left: 50 };
       const GRAPH_WIDTH = window.innerWidth * 0.9 - GRAPH_MARGIN.left - GRAPH_MARGIN.right;
-      const GRAPH_HEIGHT = 500 - GRAPH_MARGIN.top - GRAPH_MARGIN.bottom;
-      const ALIASED_GRAPH_HEIGHT = 250 - GRAPH_MARGIN.top - GRAPH_MARGIN.bottom;
+      const GRAPH_HEIGHT = 250 - GRAPH_MARGIN.top - GRAPH_MARGIN.bottom;
+      const ALIASED_GRAPH_HEIGHT = 100 - GRAPH_MARGIN.top - GRAPH_MARGIN.bottom;
 
       let coverageWindowStart = 0;
-      let coverageWindowEnd = 10000;
+      let coverageWindowEnd = 1000;
       let coverageData = {};
       let globalMin = Number.MAX_SAFE_INTEGER;
       let globalMax = Number.MIN_SAFE_INTEGER;
@@ -143,7 +146,10 @@
           }
         }
 
-        coverageData[filename] = {
+        const key = filename.replace(/[\W_]+/g, "-");
+
+        coverageData[key] = {
+          filename,
           data,
           aliasedData,
           minPos,
@@ -153,14 +159,13 @@
           globalCoverage,
         };
 
-        createCoverageGraph(filename);
-        createAliasedCoverageGraph(filename);
+        createGraphs(key);
       };
 
       /**
        * Create a coverage graph for a given *.poscounts.tsv file. A stacked bar chart.
        */
-      const createCoverageGraph = (key) => {
+      const createGraphs = (key) => {
         const data = coverageData[key].data.slice(coverageWindowStart, coverageWindowEnd);
         const maxPos = coverageData[key].maxPos;
         const minCount = coverageData[key].minCount;
@@ -173,9 +178,15 @@
         }
         windowCoverage = (windowCoverage / (coverageWindowEnd - coverageWindowStart)).toFixed(2);
 
+        // Create container div (contains both graph and aliased graph)
+        const containerDiv = document.createElement("div");
+        containerDiv.id = "graph-container-" + key;
+        containerDiv.style.cursor = "grab";
+        containerDiv.classList.add("mb-5");
+
         const titleElement = document.createElement("h3");
         titleElement.classList.add("mt-5", "mb-4");
-        titleElement.innerText = key;
+        titleElement.innerText = coverageData[key].filename;
 
         const downloadIcon = document.createElement("img");
         downloadIcon.classList.add("ms-2");
@@ -187,10 +198,31 @@
         titleElement.appendChild(downloadIcon);
 
         const subtitleElement = document.createElement("h6");
-        subtitleElement.innerText = `Total Counts: ${maxPos} | Global Coverage: ${globalCoverage}x | Window Coverage: ${windowCoverage}x`;
+        subtitleElement.innerText = `Total Counts: ${maxPos.toLocaleString()} | Global Coverage: ${globalCoverage}x | Window Coverage: ${windowCoverage}x`;
 
-        document.getElementById("viz-container").appendChild(titleElement);
-        document.getElementById("viz-container").appendChild(subtitleElement);
+        document.getElementById("viz-container").appendChild(containerDiv);
+        containerDiv.appendChild(titleElement);
+        containerDiv.appendChild(subtitleElement);
+
+        const toggleCoverageGraph = document.createElement("button");
+        toggleCoverageGraph.classList.add("btn", "btn-outline-primary", "my-3");
+        toggleCoverageGraph.innerText = "Toggle Window Coverage Graph";
+
+        toggleCoverageGraph.addEventListener("click", () => {
+          const graph = document.getElementById("graph-" + key);
+          graph.classList.toggle("d-none");
+        });
+
+        containerDiv.appendChild(toggleCoverageGraph);
+        createWindowCoverageGraph(key);
+        createAliasedCoverageGraph(key);
+      };
+
+      const createWindowCoverageGraph = (key) => {
+        const data = coverageData[key].data.slice(coverageWindowStart, coverageWindowEnd);
+        const maxPos = coverageData[key].maxPos;
+        const minCount = coverageData[key].minCount;
+        const maxCount = coverageData[key].maxCount;
 
         // Create scales
         const x = d3.scaleLinear().domain([coverageWindowStart, coverageWindowEnd]).range([0, GRAPH_WIDTH]);
@@ -205,7 +237,7 @@
 
         // Create SVG
         const svg = d3
-          .select("#viz-container")
+          .select(`#graph-container-${key}`)
           .append("div")
           .attr("class", "w-100")
           .append("svg")
@@ -213,6 +245,7 @@
           .attr("width", GRAPH_WIDTH + GRAPH_MARGIN.left + GRAPH_MARGIN.right)
           .attr("height", GRAPH_HEIGHT + GRAPH_MARGIN.top + GRAPH_MARGIN.bottom)
           .attr("font-family", "sans-serif")
+          .classed("d-none", true)
           .append("g")
           .attr("transform", `translate(${GRAPH_MARGIN.left},${GRAPH_MARGIN.top})`);
 
@@ -286,17 +319,13 @@
         const minCount = coverageData[key].minCount;
         const maxCount = coverageData[key].maxCount;
 
-        const subtitleElement = document.createElement("h6");
-        subtitleElement.innerText = `Aliased Data`;
-        document.getElementById("viz-container").appendChild(subtitleElement);
-
         // Create scales
         const x = d3.scaleLinear().domain([0, maxPos]).range([0, GRAPH_WIDTH]);
         const y = d3.scaleLinear().domain([minCount, maxCount]).range([ALIASED_GRAPH_HEIGHT, 0]);
 
         // Create SVG
         const svg = d3
-          .select("#viz-container")
+          .select(`#graph-container-${key}`)
           .append("div")
           .attr("class", "w-100")
           .append("svg")
@@ -309,18 +338,9 @@
 
         // Add axes
         svg.append("g").attr("transform", `translate(0,${ALIASED_GRAPH_HEIGHT})`).call(d3.axisBottom(x));
-        svg.append("g").call(d3.axisLeft(y));
+        svg.append("g").call(d3.axisLeft(y).tickSize(0).tickFormat(""));
 
         // Add axes label
-        svg
-          .append("text")
-          .attr("transform", "rotate(-90)")
-          .attr("y", 0 - GRAPH_MARGIN.left)
-          .attr("x", 0 - ALIASED_GRAPH_HEIGHT / 2)
-          .attr("dy", "1em")
-          .style("font-size", "14px")
-          .style("text-anchor", "middle")
-          .text("Count");
         svg
           .append("text")
           .attr("transform", `translate(${GRAPH_WIDTH / 2},${ALIASED_GRAPH_HEIGHT + GRAPH_MARGIN.top})`)
@@ -342,6 +362,25 @@
           .attr("fill", (d) => {
             return d.pos < coverageWindowStart || d.pos > coverageWindowEnd ? "lightgray" : "steelblue";
           });
+
+        // Create two lines for coverage window
+        svg
+          .append("line")
+          .attr("x1", x(coverageWindowStart))
+          .attr("y1", y(minCount) + 5)
+          .attr("x2", x(coverageWindowStart))
+          .attr("y2", y(maxCount))
+          .attr("stroke", "black")
+          .attr("stroke-width", 2);
+
+        svg
+          .append("line")
+          .attr("x1", x(coverageWindowEnd))
+          .attr("y1", y(minCount) + 5)
+          .attr("x2", x(coverageWindowEnd))
+          .attr("y2", y(maxCount))
+          .attr("stroke", "black")
+          .attr("stroke-width", 2);
       };
 
       const getExampleData = async () => {
@@ -383,6 +422,11 @@
         a.click();
         a.remove();
       };
+
+      const container = document.getElementById("viz-container");
+      const sortable = new Sortable(container, {
+        animation: 200,
+      });
 
       document.getElementById("input-folder").addEventListener("change", (e) => {
         const files = e.target.files;
@@ -430,8 +474,7 @@
 
         document.getElementById("viz-container").innerHTML = "";
         for (const key in coverageData) {
-          createCoverageGraph(key);
-          createAliasedCoverageGraph(key);
+          createGraphs(key);
         }
       });
 
@@ -448,6 +491,19 @@
         toggleButton.classList.add("btn-success");
 
         getExampleData();
+      });
+
+      document.getElementById("toggle-all-window-graphs").addEventListener("click", () => {
+        let anyShown = false;
+        for (const key in coverageData) {
+          const graph = document.getElementById("graph-" + key);
+          anyShown = anyShown || !graph.classList.contains("d-none");
+        }
+
+        for (const key in coverageData) {
+          const graph = document.getElementById("graph-" + key);
+          graph.classList.toggle("d-none", anyShown);
+        }
       });
     </script>
   </body>
