@@ -14,6 +14,11 @@
         min-height: 100vh;
       }
 
+      .container {
+        border: 2px solid black;
+        border-radius: 2px;
+      }
+
       #use-example-data {
         transition: background-color 0.25s;
       }
@@ -25,24 +30,33 @@
       <p>
         Visualize position counts & coverage of
         <a href="https://github.com/niemasd/MultiVirusConsensus" target="_blank">MultiVirusConsensus</a> output. Browser-side & secure, no data is
-        uploaded.
+        uploaded. Drag and drop to re-arrange graphs.
       </p>
-      <div class="w-100 mt-5 d-flex justify-content-center flex-column" id="input-container">
-        <label for="input-folder" class="btn btn-primary">Select MultiVirusConsensus Output Folder</label>
-        <input type="file" id="input-folder" class="form-control d-none" webkitdirectory multiple />
+      <h5 class="text-center mt-4">Input</h5>
+      <div class="container mt-3 p-4">
+        <div class="w-100 d-flex justify-content-center flex-column">
+          <label for="input-folder" class="btn btn-primary">Select MultiVirusConsensus Output Folder</label>
+          <input type="file" id="input-folder" class="form-control d-none" webkitdirectory multiple />
+        </div>
+        <h6 class="text-center my-2">-- OR --</h6>
+        <div class="w-100 d-flex justify-content-center flex-column">
+          <label for="input-file" class="btn btn-primary">Select MultiVirusConsensus Compressed Output Folder (zip, tar.gz)</label>
+          <input type="file" id="input-file" class="form-control d-none" accept=".zip,.gz" />
+        </div>
+        <h6 class="text-center my-2">-- OR --</h6>
+        <button id="use-example-data" class="btn btn-warning w-100">Load Example Data</button>
+        <h6 id="selected-folder-info" class="mt-3 text-center d-none">Currently selected folder: <span id="selected-folder"></span></h6>
       </div>
-      <button id="use-example-data" class="btn btn-warning mt-3 w-100">Load Example Data</button>
-      <h6 id="selected-folder-info" class="mt-3 text-center d-none">Currently selected folder: <span id="selected-folder"></span></h6>
 
-      <div id="coverage-container" class="d-none">
-        <h5 class="mt-5">Coverage Window</h5>
+      <h5 id="coverage-title" class="text-center mt-4 d-none">Coverage Window</h5>
+      <div id="coverage-container" class="container mt-3 p-4 d-none">
         <div class="d-flex">
           <div class="w-50 pe-3">
-            <label for="coverage-window-start" class="mt-2">Start</label>
+            <label for="coverage-window-start">Start</label>
             <input type="number" id="coverage-window-start" class="form-control" value="0" min="0" />
           </div>
           <div class="w-50 ps-3">
-            <label for="coverage-window-end" class="mt-2">End</label>
+            <label for="coverage-window-end">End</label>
             <input type="number" id="coverage-window-end" class="form-control" value="1000" min="0" />
           </div>
         </div>
@@ -51,18 +65,32 @@
           <button id="toggle-all-window-graphs" class="btn btn-outline-primary mt-3 w-100">Toggle All Window Coverage Graphs</button>
         </div>
       </div>
+
+      <h5 id="download-title" class="text-center mt-4 d-none">Download Graphs</h5>
+      <div id="download-container" class="container mt-3 p-4 d-none">
+        <div class="d-flex justify-content-around align-items-center mb-3">
+          <h6 class="mt-1">Format:</h6>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="download-format" id="download-svg" value="svg" checked />
+            <label class="form-check-label" for="download-svg">SVG (higher quality)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="download-format" id="download-png" value="png" />
+            <label class="form-check-label" for="download-png">PNG (wider compatibility)</label>
+          </div>
+        </div>
+        <button id="download-all" class="btn btn-primary w-100">Download All Graphs</button>
+      </div>
     </div>
 
     <div id="viz-container"></div>
 
-    <footer id="footer" class="mt-5 mb-4">
+    <footer id="footer" class="mt-5 mb-5">
       <h5>Future Features (Ranked by Estimated Priority)</h5>
       <ol>
-        <li>#! Export graphs as PNG and all graphs at once (zip)</li>
-        <li>#! Test 40 genomes & add lazy loading (load-out?) feature</li>
         <li>#! Re-arrangeable graph with sidebar up-down buttons</li>
-        <li>#! Support compressed output folders (zip, tar.gz)</li>
         <li>Optimize performance</li>
+        <li>E2E Tests</li>
         <li>Interactive Graphs</li>
         <li>Should x-axis be same across all graphs, even if some genomes don't have those position counts?</li>
         <li>Same y-axis across all graphs?</li>
@@ -79,6 +107,8 @@
     ></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-untar@2.0.0/build/dist/untar.min.js"></script>
     <script>
       const ALIASED_MAX = 1000;
       const COVERAGE_HEADERS = ["aCount", "cCount", "gCount", "tCount", "gapCount"];
@@ -93,6 +123,15 @@
       let globalMin = Number.MAX_SAFE_INTEGER;
       let globalMax = Number.MIN_SAFE_INTEGER;
       let usingExampleData = false;
+
+      // ----- CODE ON PAGE LOAD -----
+
+      const container = document.getElementById("viz-container");
+      const sortable = new Sortable(container, {
+        animation: 200,
+      });
+
+      // ----- FUNCTIONS -----
 
       const parseCoverageData = (rawText, filename) => {
         const lines = rawText.split("\n");
@@ -383,50 +422,91 @@
           .attr("stroke-width", 2);
       };
 
-      const getExampleData = async () => {
-        const response = await fetch("example_output.zip");
-        const data = await response.blob();
+      const handleArchiveFile = (data, filename) => {
         const reader = new FileReader();
         reader.onload = async (e) => {
-          const zip = new JSZip();
-          const zipData = await zip.loadAsync(e.target.result);
-          const files = Object.keys(zipData.files);
+          if (filename.endsWith(".gz")) {
+            const inflatedData = pako.inflate(new Uint8Array(e.target.result));
+            const files = await untar(inflatedData.buffer);
 
-          for (const file of files) {
-            if (!file.endsWith(".poscounts.tsv")) {
-              continue;
+            for (const file of files) {
+              if (!file.name.endsWith(".poscounts.tsv")) {
+                continue;
+              }
+
+              const text = new TextDecoder().decode(file.buffer);
+              parseCoverageData(text, file.name);
             }
-            const fileData = await zipData.file(file).async("string");
-            parseCoverageData(fileData, file);
+          } else {
+            const zip = new JSZip();
+            const zipData = await zip.loadAsync(e.target.result);
+            const files = Object.keys(zipData.files);
+            for (const file of files) {
+              if (!file.endsWith(".poscounts.tsv")) {
+                continue;
+              }
+              const fileData = await zipData.file(file).async("string");
+              parseCoverageData(fileData, file);
+            }
           }
         };
 
         reader.readAsArrayBuffer(data);
       };
 
+      const getExampleData = async () => {
+        const response = await fetch("example_output.zip");
+        const data = await response.blob();
+        handleArchiveFile(data, "example_output.zip");
+      };
+
       const addDownloadEventListener = (element, key, suffix) => {
         element.addEventListener("click", () => {
-          downloadSVG("graph-" + key, suffix);
-          downloadSVG("aliased-graph-" + key, suffix);
+          downloadGraph("graph-" + key, suffix);
+          downloadGraph("aliased-graph-" + key, suffix);
         });
       };
 
-      const downloadSVG = (id, suffix) => {
+      const downloadGraph = (id, suffix) => {
         const svg = document.getElementById(id);
         const svgData = new XMLSerializer().serializeToString(svg);
         const blob = new Blob([svgData], { type: "image/svg+xml" });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.setAttribute("href", url);
-        a.setAttribute("download", id + suffix + ".svg");
-        a.click();
-        a.remove();
+
+        if (document.getElementById("download-svg").checked) {
+          const a = document.createElement("a");
+          a.setAttribute("href", url);
+          a.setAttribute("download", id + suffix + ".svg");
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } else {
+          const canvas = document.createElement("canvas");
+          canvas.width = svg.width.baseVal.value;
+          canvas.height = svg.height.baseVal.value;
+          const img = new Image();
+
+          img.onload = () => {
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0);
+
+            canvas.toBlob((blob) => {
+              const pngUrl = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = pngUrl;
+              a.download = id + suffix + ".png";
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(pngUrl);
+              URL.revokeObjectURL(url);
+            }, "image/png");
+          };
+
+          img.src = url;
+        }
       };
 
-      const container = document.getElementById("viz-container");
-      const sortable = new Sortable(container, {
-        animation: 200,
-      });
+      // ----- EVENT LISTENERS -----
 
       document.getElementById("input-folder").addEventListener("change", (e) => {
         const files = e.target.files;
@@ -436,8 +516,12 @@
           return;
         }
 
+        document.getElementById("viz-container").innerHTML = "";
         document.getElementById("use-example-data").classList.add("d-none");
         document.getElementById("coverage-container").classList.remove("d-none");
+        document.getElementById("coverage-title").classList.remove("d-none");
+        document.getElementById("download-title").classList.remove("d-none");
+        document.getElementById("download-container").classList.remove("d-none");
 
         const folderPath = files[0].webkitRelativePath.split("/")[0];
         document.getElementById("selected-folder-info").classList.remove("d-none");
@@ -463,6 +547,25 @@
         }
       });
 
+      document.getElementById("input-file").addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        const filename = file.name;
+
+        if (!filename.endsWith(".zip") && !filename.endsWith(".gz")) {
+          alert("Invalid file type. Please select a zip or tar.gz file.");
+          return;
+        }
+
+        document.getElementById("viz-container").innerHTML = "";
+        document.getElementById("use-example-data").classList.add("d-none");
+        document.getElementById("coverage-container").classList.remove("d-none");
+        document.getElementById("coverage-title").classList.remove("d-none");
+        document.getElementById("download-title").classList.remove("d-none");
+        document.getElementById("download-container").classList.remove("d-none");
+
+        handleArchiveFile(file, filename);
+      });
+
       document.getElementById("update-coverage-window").addEventListener("click", () => {
         coverageWindowStart = parseInt(document.getElementById("coverage-window-start").value);
         coverageWindowEnd = parseInt(document.getElementById("coverage-window-end").value);
@@ -484,6 +587,10 @@
         }
 
         document.getElementById("coverage-container").classList.remove("d-none");
+        document.getElementById("coverage-title").classList.remove("d-none");
+        document.getElementById("download-title").classList.remove("d-none");
+        document.getElementById("download-container").classList.remove("d-none");
+
         usingExampleData = true;
         const toggleButton = document.getElementById("use-example-data");
         toggleButton.innerText = "Using Example Data!";
@@ -504,6 +611,55 @@
           const graph = document.getElementById("graph-" + key);
           graph.classList.toggle("d-none", anyShown);
         }
+      });
+
+      const addGraphToZip = (zip, key) => {
+        return new Promise((resolve) => {
+          const svg = document.getElementById(key);
+          const svgData = new XMLSerializer().serializeToString(svg);
+          if (document.getElementById("download-svg").checked) {
+            zip.file(`${key}-${coverageWindowStart}-${coverageWindowEnd}.svg`, svgData);
+            resolve();
+          } else {
+            const blob = new Blob([svgData], { type: "image/svg+xml" });
+            const url = URL.createObjectURL(blob);
+            const canvas = document.createElement("canvas");
+            canvas.width = svg.width.baseVal.value;
+            canvas.height = svg.height.baseVal.value;
+            const img = new Image();
+
+            img.onload = () => {
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(img, 0, 0);
+
+              canvas.toBlob((blob) => {
+                zip.file(`${key}-${coverageWindowStart}-${coverageWindowEnd}.png`, blob);
+                URL.revokeObjectURL(url);
+                resolve();
+              }, "image/png");
+            };
+
+            img.src = url;
+          }
+        });
+      };
+
+      document.getElementById("download-all").addEventListener("click", async () => {
+        const zip = new JSZip();
+        for (const key in coverageData) {
+          await addGraphToZip(zip, "graph-" + key);
+          await addGraphToZip(zip, "aliased-graph-" + key);
+        }
+
+        zip.generateAsync({ type: "blob" }).then((content) => {
+          const url = URL.createObjectURL(content);
+          const a = document.createElement("a");
+          a.setAttribute("href", url);
+          a.setAttribute("download", "MultiVirusConsensus-Viz-All-Graphs.zip");
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        });
       });
     </script>
   </body>
