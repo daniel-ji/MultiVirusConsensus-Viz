@@ -88,7 +88,9 @@
     <footer id="footer" class="mt-5 mb-5">
       <h5>Future Features (Ranked by Estimated Priority)</h5>
       <ol>
+        <li>#! Add diversity (pi) metric (global and window?) and window richness?</li>
         <li>#! Re-arrangeable graph with sidebar up-down buttons</li>
+        <li>#! Adding loading... indication (with # of graphs done loading)</li>
         <li>Optimize performance</li>
         <li>E2E Tests</li>
         <li>Interactive Graphs</li>
@@ -133,7 +135,9 @@
 
       // ----- FUNCTIONS -----
 
-      const parseCoverageData = (rawText, filename) => {
+      const parseCoverageData = (rawText, referenceText, filename) => {
+        // TODO: handle malformed data
+        const refSeq = referenceText.split("\n")[1];
         const lines = rawText.split("\n");
         if (lines[lines.length - 1] === "") {
           lines.pop();
@@ -143,11 +147,33 @@
         let minCount = Number.MAX_SAFE_INTEGER;
         let maxCount = Number.MIN_SAFE_INTEGER;
         let globalCoverage = 0;
+        let globalRichness = 0;
         const data = lines.slice(1).map((line) => {
           const [pos, aCount, cCount, gCount, tCount, gapCount, totalCount] = line.split("\t");
           const posInt = parseInt(pos);
           const totalCountInt = parseInt(totalCount);
+          const referenceBase = refSeq[posInt].toUpperCase();
           globalCoverage += totalCountInt;
+          let referenceCount = 0;
+          switch (referenceBase) {
+            case "A":
+              referenceCount = parseInt(aCount);
+              break;
+            case "C":
+              referenceCount = parseInt(cCount);
+              break;
+            case "G":
+              referenceCount = parseInt(gCount);
+              break;
+            case "T":
+              referenceCount = parseInt(tCount);
+              break;
+            default:
+              referenceCount = parseInt(gapCount);
+              break;
+          }
+          const nMetric = (totalCount - referenceCount) / totalCount;
+          globalRichness += nMetric <= 0.95 && nMetric >= 0.05 ? 1 : 0;
           minPos = Math.min(minPos, posInt);
           maxPos = Math.max(maxPos, posInt);
           minCount = Math.min(minCount, totalCountInt);
@@ -167,6 +193,7 @@
         globalMin = Math.min(globalMin, minCount);
         globalMax = Math.max(globalMax, maxCount);
         globalCoverage = globalCoverage / (maxPos - minPos);
+        globalNormalizedRichness = globalRichness / (maxPos - minPos);
 
         let aliasedData;
         if (data.length < ALIASED_MAX) {
@@ -196,6 +223,8 @@
           minCount,
           maxCount,
           globalCoverage,
+          globalRichness,
+          globalNormalizedRichness,
         };
 
         createGraphs(key);
@@ -237,7 +266,13 @@
         titleElement.appendChild(downloadIcon);
 
         const subtitleElement = document.createElement("h6");
-        subtitleElement.innerText = `Total Counts: ${maxPos.toLocaleString()} | Global Coverage: ${globalCoverage}x | Window Coverage: ${windowCoverage}x`;
+        subtitleElement.innerText = `
+        Total Counts: ${maxPos.toLocaleString()}
+        Global Coverage: ${globalCoverage}x
+        Window Coverage: ${windowCoverage}x 
+        Global Richness: ${coverageData[key].globalRichness} 
+        Global Normalized Richness: ${(coverageData[key].globalNormalizedRichness * 100).toFixed(4)}%
+    `;
 
         document.getElementById("viz-container").appendChild(containerDiv);
         containerDiv.appendChild(titleElement);
@@ -434,8 +469,20 @@
                 continue;
               }
 
+              const fileBaseName = file.name.split("/").pop();
+              const referenceFile = files.find((f) => {
+                const baseName = f.name.split("/").pop();
+                return (
+                  baseName.endsWith(".fas") && baseName.startsWith("reference.") && baseName.includes(fileBaseName.replace(".poscounts.tsv", ""))
+                );
+              });
+              if (referenceFile === undefined) {
+                alert("Reference file not found for " + file.name);
+                continue;
+              }
+              const referenceText = new TextDecoder().decode(referenceFile.buffer);
               const text = new TextDecoder().decode(file.buffer);
-              parseCoverageData(text, file.name);
+              parseCoverageData(text, referenceText, file.name);
             }
           } else {
             const zip = new JSZip();
@@ -445,8 +492,21 @@
               if (!file.endsWith(".poscounts.tsv")) {
                 continue;
               }
+
+              const fileBaseName = file.split("/").pop();
+              const referenceFile = files.find((f) => {
+                const baseName = f.split("/").pop();
+                return (
+                  baseName.endsWith(".fas") && baseName.startsWith("reference.") && baseName.includes(fileBaseName.replace(".poscounts.tsv", ""))
+                );
+              });
+              if (referenceFile === undefined) {
+                alert("Reference file not found for " + file);
+                continue;
+              }
+              const referenceText = await zipData.file(referenceFile).async("string");
               const fileData = await zipData.file(file).async("string");
-              parseCoverageData(fileData, file);
+              parseCoverageData(fileData, referenceText, file);
             }
           }
         };
